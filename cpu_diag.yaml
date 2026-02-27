@@ -5,7 +5,7 @@
   gather_facts: yes
 
   vars:
-    diagnostic_base_dir: /var/log/predictive_cpu
+    diagnostic_base_dir: /tmp/predictive_cpu
     cpu_threshold: 70          # Optional logic hook if needed later
     timestamp: "{{ ansible_date_time.iso8601_basic }}"
     diag_dir: "{{ diagnostic_base_dir }}/cpu_diag_{{ timestamp }}"
