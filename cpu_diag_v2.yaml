@@ -1,0 +1,120 @@
+---
+- name: Predictive CPU Diagnostic - Stable Structured Output (RHEL)
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  tasks:
+
+    - name: Print header
+      debug:
+        msg: "===== PREDICTIVE CPU DIAGNOSTIC START ====="
+
+    ############################################################
+    # SYSTEM OVERVIEW
+    ############################################################
+
+    - name: System overview
+      shell: |
+        echo "===== SYSTEM OVERVIEW ====="
+        uptime
+        echo
+        echo "Load Average:"
+        cat /proc/loadavg
+      register: system_overview
+      changed_when: false
+
+    - debug:
+        var: system_overview.stdout_lines
+
+    ############################################################
+    # CPU SNAPSHOT
+    ############################################################
+
+    - name: CPU snapshot (top)
+      shell: |
+        echo "===== CPU SNAPSHOT ====="
+        top -b -n 1 | head -20
+      register: cpu_snapshot
+      changed_when: false
+
+    - debug:
+        var: cpu_snapshot.stdout_lines
+
+    ############################################################
+    # TOP CPU PROCESSES
+    ############################################################
+
+    - name: Top CPU processes
+      shell: |
+        echo "===== TOP CPU PROCESSES ====="
+        ps -eo pid,ppid,user,%cpu,%mem,comm --sort=-%cpu | head -10
+      register: top_processes
+      changed_when: false
+
+    - debug:
+        var: top_processes.stdout_lines
+
+    ############################################################
+    # THREAD VIEW (Top 3 Processes)
+    ############################################################
+
+    - name: Thread-level view for top processes
+      shell: |
+        echo "===== THREAD LEVEL VIEW ====="
+        for pid in $(ps -eo pid --sort=-%cpu | head -4 | tail -3); do
+          echo "---- Threads for PID: $pid ----"
+          top -H -b -n 1 -p $pid | head -20
+          echo
+        done
+      register: thread_view
+      changed_when: false
+      ignore_errors: yes
+
+    - debug:
+        var: thread_view.stdout_lines
+      when: thread_view is defined
+
+    ############################################################
+    # MEMORY STATE
+    ############################################################
+
+    - name: Memory state
+      shell: |
+        echo "===== MEMORY STATE ====="
+        free -m
+        echo
+        vmstat 1 3
+      register: memory_state
+      changed_when: false
+
+    - debug:
+        var: memory_state.stdout_lines
+
+    ############################################################
+    # IO STATE
+    ############################################################
+
+    - name: IO state
+      shell: |
+        echo "===== IO STATE ====="
+        iostat -xz 1 3 || echo "iostat not available"
+      register: io_state
+      changed_when: false
+      ignore_errors: yes
+
+    - debug:
+        var: io_state.stdout_lines
+      when: io_state is defined
+
+    ############################################################
+    # SUMMARY
+    ############################################################
+
+    - name: Diagnostic summary
+      debug:
+        msg: |
+          ===== DIAGNOSTIC SUMMARY =====
+          Review the TOP CPU PROCESSES and THREAD LEVEL VIEW sections.
+          The processes at the top of the CPU list are most likely
+          contributing to the predicted CPU threshold breach.
