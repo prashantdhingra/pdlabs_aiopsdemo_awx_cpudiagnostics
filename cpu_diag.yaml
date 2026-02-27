@@ -1,0 +1,141 @@
+---
+- name: Predictive CPU Diagnostic Capture - RHEL
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  vars:
+    diagnostic_base_dir: /var/log/predictive_cpu
+    cpu_threshold: 70          # Optional logic hook if needed later
+    timestamp: "{{ ansible_date_time.iso8601_basic }}"
+    diag_dir: "{{ diagnostic_base_dir }}/cpu_diag_{{ timestamp }}"
+    archive_name: "cpu_diag_{{ inventory_hostname }}_{{ timestamp }}.tar.gz"
+
+  tasks:
+
+    - name: Ensure base diagnostic directory exists
+      file:
+        path: "{{ diagnostic_base_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create timestamped diagnostic directory
+      file:
+        path: "{{ diag_dir }}"
+        state: directory
+        mode: '0755'
+
+    ############################################################
+    # BASIC SYSTEM SNAPSHOT
+    ############################################################
+
+    - name: Capture uptime and load
+      shell: |
+        echo "===== UPTIME =====" > {{ diag_dir }}/system_overview.txt
+        uptime >> {{ diag_dir }}/system_overview.txt
+        echo -e "\n===== LOADAVG =====" >> {{ diag_dir }}/system_overview.txt
+        cat /proc/loadavg >> {{ diag_dir }}/system_overview.txt
+
+    - name: Capture CPU statistics
+      shell: |
+        echo "===== MPSTAT =====" > {{ diag_dir }}/cpu_stats.txt
+        mpstat -P ALL 1 5 >> {{ diag_dir }}/cpu_stats.txt
+        echo -e "\n===== VMSTAT =====" >> {{ diag_dir }}/cpu_stats.txt
+        vmstat 1 5 >> {{ diag_dir }}/cpu_stats.txt
+      ignore_errors: yes
+
+    - name: Capture SAR CPU history if available
+      shell: |
+        if [ -d /var/log/sa ]; then
+          echo "===== SAR CPU HISTORY =====" > {{ diag_dir }}/sar_cpu.txt
+          sar -u >> {{ diag_dir }}/sar_cpu.txt
+        fi
+      ignore_errors: yes
+
+    ############################################################
+    # PROCESS ANALYSIS
+    ############################################################
+
+    - name: Capture top CPU processes
+      shell: |
+        echo "===== TOP CPU PROCESSES =====" > {{ diag_dir }}/top_processes.txt
+        ps -eo pid,ppid,user,cmd,%mem,%cpu --sort=-%cpu | head -20 >> {{ diag_dir }}/top_processes.txt
+      register: top_process_output
+
+    - name: Get highest CPU PID
+      shell: "ps -eo pid,%cpu --sort=-%cpu | awk 'NR==2 {print $1}'"
+      register: top_pid
+
+    - name: Capture detailed info for top PID
+      shell: |
+        echo "===== PROCESS DETAILS =====" > {{ diag_dir }}/top_pid_details.txt
+        ps -fp {{ top_pid.stdout }} >> {{ diag_dir }}/top_pid_details.txt
+        echo -e "\n===== THREAD LEVEL STATS =====" >> {{ diag_dir }}/top_pid_details.txt
+        top -H -b -n 1 -p {{ top_pid.stdout }} >> {{ diag_dir }}/top_pid_details.txt
+      when: top_pid.stdout != ""
+
+    ############################################################
+    # JAVA THREAD DUMP (IF APPLICABLE)
+    ############################################################
+
+    - name: Check if top process is Java
+      shell: "ps -p {{ top_pid.stdout }} -o comm= | grep java"
+      register: is_java
+      ignore_errors: yes
+
+    - name: Capture Java thread dump if Java detected
+      shell: |
+        if command -v jstack >/dev/null 2>&1; then
+          jstack {{ top_pid.stdout }} > {{ diag_dir }}/jstack_{{ top_pid.stdout }}.txt
+        fi
+      when: is_java.rc == 0
+      ignore_errors: yes
+
+    ############################################################
+    # MEMORY & IO CHECK
+    ############################################################
+
+    - name: Capture memory stats
+      shell: |
+        echo "===== FREE MEMORY =====" > {{ diag_dir }}/memory.txt
+        free -m >> {{ diag_dir }}/memory.txt
+        echo -e "\n===== VMSTAT =====" >> {{ diag_dir }}/memory.txt
+        vmstat 1 5 >> {{ diag_dir }}/memory.txt
+
+    - name: Capture IO stats
+      shell: |
+        echo "===== IOSTAT =====" > {{ diag_dir }}/io_stats.txt
+        iostat -xz 1 5 >> {{ diag_dir }}/io_stats.txt
+      ignore_errors: yes
+
+    ############################################################
+    # CONTEXT SWITCH / RUN QUEUE
+    ############################################################
+
+    - name: Capture run queue and context switching
+      shell: |
+        echo "===== SAR QUEUE =====" > {{ diag_dir }}/runqueue.txt
+        sar -q >> {{ diag_dir }}/runqueue.txt
+        echo -e "\n===== SAR CONTEXT SWITCH =====" >> {{ diag_dir }}/runqueue.txt
+        sar -w >> {{ diag_dir }}/runqueue.txt
+      ignore_errors: yes
+
+    ############################################################
+    # PACKAGE & FETCH
+    ############################################################
+
+    - name: Create compressed archive
+      archive:
+        path: "{{ diag_dir }}"
+        dest: "{{ diagnostic_base_dir }}/{{ archive_name }}"
+        format: gz
+
+    - name: Fetch archive to control node
+      fetch:
+        src: "{{ diagnostic_base_dir }}/{{ archive_name }}"
+        dest: "./diagnostics/"
+        flat: yes
+
+    - name: Print completion message
+      debug:
+        msg: "CPU diagnostic bundle created: {{ archive_name }}"
