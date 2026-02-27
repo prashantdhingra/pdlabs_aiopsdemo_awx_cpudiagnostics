@@ -1,0 +1,130 @@
+---
+- name: Predictive CPU Diagnostic - Structured Output (RHEL)
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  vars:
+    cpu_alert_threshold: 20   # Minimum CPU % for deep dive
+
+  tasks:
+
+    - name: Print header
+      debug:
+        msg: "===== PREDICTIVE CPU DIAGNOSTIC START ====="
+
+    ############################################################
+    # SYSTEM OVERVIEW
+    ############################################################
+
+    - name: Capture uptime and load
+      shell: |
+        echo "===== SYSTEM OVERVIEW ====="
+        uptime
+        echo
+        echo "Load Average:"
+        cat /proc/loadavg
+      register: system_overview
+
+    - debug:
+        var: system_overview.stdout_lines
+
+    ############################################################
+    # CPU SNAPSHOT
+    ############################################################
+
+    - name: Capture CPU breakdown
+      shell: |
+        echo "===== CPU BREAKDOWN (mpstat) ====="
+        mpstat -P ALL 1 3
+      register: cpu_stats
+      ignore_errors: yes
+
+    - debug:
+        var: cpu_stats.stdout_lines
+
+    ############################################################
+    # IDENTIFY TOP CPU PROCESS
+    ############################################################
+
+    - name: Identify highest CPU consuming PID
+      shell: "ps -eo pid,%cpu,comm --sort=-%cpu | awk 'NR==2 {print $1, $2, $3}'"
+      register: top_process_raw
+
+    - name: Parse top process values
+      set_fact:
+        top_pid: "{{ top_process_raw.stdout.split()[0] }}"
+        top_cpu: "{{ top_process_raw.stdout.split()[1] | float }}"
+        top_comm: "{{ top_process_raw.stdout.split()[2] }}"
+
+    - name: Display top CPU process
+      debug:
+        msg: |
+          ===== TOP CPU PROCESS =====
+          PID: {{ top_pid }}
+          CPU Usage: {{ top_cpu }} %
+          Command: {{ top_comm }}
+
+    ############################################################
+    # DEEP DIVE IF CPU ABOVE THRESHOLD
+    ############################################################
+
+    - name: Capture detailed process information
+      shell: |
+        echo "===== PROCESS DETAILS ====="
+        ps -fp {{ top_pid }}
+        echo
+        echo "===== THREAD LEVEL CPU ====="
+        top -H -b -n 1 -p {{ top_pid }}
+      when: top_cpu > cpu_alert_threshold
+      register: process_details
+
+    - debug:
+        var: process_details.stdout_lines
+      when: top_cpu > cpu_alert_threshold
+
+    ############################################################
+    # MEMORY CHECK
+    ############################################################
+
+    - name: Capture memory stats
+      shell: |
+        echo "===== MEMORY STATE ====="
+        free -m
+        echo
+        vmstat 1 3
+      register: memory_stats
+
+    - debug:
+        var: memory_stats.stdout_lines
+
+    ############################################################
+    # IO CHECK
+    ############################################################
+
+    - name: Capture IO stats
+      shell: |
+        echo "===== IO STATE ====="
+        iostat -xz 1 3
+      register: io_stats
+      ignore_errors: yes
+
+    - debug:
+        var: io_stats.stdout_lines
+      when: io_stats is defined
+
+    ############################################################
+    # ROOT CAUSE SUMMARY
+    ############################################################
+
+    - name: Print diagnostic summary
+      debug:
+        msg: |
+          ===== ROOT CAUSE SUMMARY =====
+          Highest CPU process detected:
+          - PID: {{ top_pid }}
+          - Command: {{ top_comm }}
+          - CPU Usage: {{ top_cpu }} %
+
+          If CPU usage trend continues, this process is likely
+          contributing to the predicted threshold breach.
