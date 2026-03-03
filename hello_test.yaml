@@ -1,0 +1,10 @@
+---
+- name: Simple Hello Test
+  hosts: localhost
+  connection: local
+  gather_facts: no
+
+  tasks:
+    - name: Print a message
+      debug:
+        msg: "Hello from AWX 🎉"
