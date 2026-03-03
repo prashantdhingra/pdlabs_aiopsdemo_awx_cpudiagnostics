@@ -1,0 +1,14 @@
+---
+- name: CPU Diagnostics
+  hosts: all
+  gather_facts: no
+
+  tasks:
+    - name: Capture CPU snapshot
+      shell: top -b -n 1 | head -n 25
+      register: cpu_output
+
+    - name: Store output for workflow
+      set_stats:
+        data:
+          cpu_data: "{{ cpu_output.stdout }}"
