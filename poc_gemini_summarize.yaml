@@ -1,0 +1,35 @@
+---
+- name: Summarize CPU Output with Gemini
+  hosts: localhost
+  connection: local
+  gather_facts: no
+
+  vars:
+    gemini_api_key: "{{ gemini_api_key }}"
+
+  tasks:
+    - name: Call Gemini API
+      uri:
+        url: "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key={{ gemini_api_key }}"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          contents:
+            - parts:
+                - text: |
+                    You are a Linux performance expert.
+                    Analyze this CPU diagnostic output and:
+                    1. Identify any abnormal behavior
+                    2. Suggest likely root cause
+                    3. Suggest next troubleshooting steps
+
+                    Output:
+                    {{ cpu_data }}
+        return_content: yes
+      register: gemini_response
+
+    - name: Print AI Summary
+      debug:
+        var: gemini_response.json
